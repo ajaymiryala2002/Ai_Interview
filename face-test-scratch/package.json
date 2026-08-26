@@ -1,0 +1,17 @@
+{
+  "name": "face-test-scratch",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@tensorflow/tfjs": "^1.7.4",
+    "face-api.js": "^0.22.2",
+    "jimp": "^1.6.1"
+  }
+}

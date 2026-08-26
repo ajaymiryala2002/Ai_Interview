@@ -1,0 +1,37 @@
+# version: '3.8'
+# services:
+#   db:
+#     image: postgres:15
+#     restart: always
+#     environment:
+#       POSTGRES_USER: pyproctor
+#       POSTGRES_PASSWORD: pyproctor_password
+#       POSTGRES_DB: pyproctor_db
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+
+# volumes:
+#   postgres_data:
+
+
+
+
+version: '3.8'
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: AIINTERVIEW
+      MYSQL_USER: ajay
+      MYSQL_PASSWORD: Ajay@2002
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
