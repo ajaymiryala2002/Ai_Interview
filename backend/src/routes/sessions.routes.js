@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const sessions_controller_1 = require("../controllers/sessions.controller");
 const router = (0, express_1.Router)();
+router.get('/:id/result', sessions_controller_1.getSessionResult);
 router.post('/:id/start', sessions_controller_1.startSession);
 router.get('/:id/next-question', sessions_controller_1.getNextQuestion);
 router.post('/:id/answer', sessions_controller_1.submitAnswer);

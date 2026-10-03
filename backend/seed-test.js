@@ -20,7 +20,7 @@ async function main() {
   }
 
   // 2. Create test candidate
-  const candidate = await prisma.candidate.create({
+  const candidate = await prisma.candidate.create({ 
     data: {
       organizer_id: organizer.id,
       name: 'Ajay Test Candidate',

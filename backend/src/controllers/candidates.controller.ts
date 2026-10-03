@@ -56,14 +56,11 @@ export const grantAccess = async (req: AuthRequest, res: Response) => {
 
     if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
 
-    assertEmailConfiguration();
-
-    const frontendUrl = process.env.FRONTEND_URL;
-    if (!frontendUrl) throw new Error('FRONTEND_URL is not configured');
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     const token = crypto.randomBytes(32).toString('hex');
     const expires_at = new Date();
-    expires_at.setHours(expires_at.getHours() + 1);
+    expires_at.setHours(expires_at.getHours() + 48); // 48 hours validity for testing
 
     const invite = await prisma.inviteToken.create({
       data: {
@@ -73,26 +70,32 @@ export const grantAccess = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    await prisma.candidate.update({
+      where: { id },
+      data: { access_granted: true }
+    });
+
     const inviteLink = `${frontendUrl.replace(/\/$/, '')}/interview/${token}/terms`;
 
+    let emailSent = false;
+    let emailNotice = '';
     try {
+      assertEmailConfiguration();
       await sendInterviewInvitationEmail(candidate, inviteLink);
-      await prisma.candidate.update({
-        where: { id },
-        data: { access_granted: true }
-      });
-    } catch (error) {
-      await prisma.inviteToken.delete({ where: { id: invite.id } });
-      throw error;
+      emailSent = true;
+    } catch (mailErr: any) {
+      console.warn(`[GrantAccess] Email not sent (${mailErr.message}). Active link: ${inviteLink}`);
+      emailNotice = ' (Note: Email was not sent due to unconfigured SMTP. You can copy the invite link directly).';
     }
 
-    res.json({ message: 'Access granted and invitation email sent', inviteLink });
+    res.json({
+      message: `Access granted successfully!${emailNotice}`,
+      inviteLink,
+      emailSent
+    });
   } catch (error) {
-    console.error('Failed to grant access or send invitation:', error);
-    const message = error instanceof Error && error.message.startsWith('Email is not configured')
-      ? error.message
-      : 'Failed to send invitation email. Check the SMTP settings and server logs.';
-    res.status(500).json({ error: message });
+    console.error('Failed to grant access:', error);
+    res.status(500).json({ error: 'Failed to grant candidate access' });
   }
 };
 

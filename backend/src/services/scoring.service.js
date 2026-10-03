@@ -46,8 +46,8 @@ const scoreSession = async (sessionId) => {
         else {
             score = keywordMatchScore(answerText, rubric);
         }
-        // Consider answer "correct" if score >= 60%
-        const isCorrect = score >= 60;
+        // Consider answer "correct" if score >= 40%
+        const isCorrect = score >= 40;
         if (isCorrect)
             correctCount++;
         const feedback = score > 80
@@ -118,14 +118,19 @@ const scoreSession = async (sessionId) => {
             status: result === 'rejected' ? 'rejected' : 'completed'
         }
     });
-    // Send result email automatically
+    // Send result email automatically if configured
     if (!session.result_email_sent_at) {
         const passed = result === 'selected';
-        await (0, email_service_1.sendInterviewResultEmail)(session.candidate, overall, correctCount, passed, rejectionReason);
-        await db_1.default.interviewSession.update({
-            where: { id: sessionId },
-            data: { result_email_sent_at: new Date() }
-        });
+        try {
+            await (0, email_service_1.sendInterviewResultEmail)(session.candidate, overall, correctCount, passed, rejectionReason);
+            await db_1.default.interviewSession.update({
+                where: { id: sessionId },
+                data: { result_email_sent_at: new Date() }
+            });
+        }
+        catch (mailErr) {
+            console.warn(`[ScoringService] Result email not sent (${mailErr.message})`);
+        }
     }
     console.log(`Session ${sessionId} scored. Overall: ${overall}%, Correct: ${correctCount}/10, Result: ${result}`);
 };

@@ -125,14 +125,18 @@ export const scoreSession = async (sessionId: string) => {
     }
   });
 
-  // Send result email automatically
+  // Send result email automatically if configured
   if (!session.result_email_sent_at) {
     const passed = result === 'selected';
-    await sendInterviewResultEmail(session.candidate, overall, correctCount, passed, rejectionReason);
-    await prisma.interviewSession.update({
-      where: { id: sessionId },
-      data: { result_email_sent_at: new Date() }
-    });
+    try {
+      await sendInterviewResultEmail(session.candidate, overall, correctCount, passed, rejectionReason);
+      await prisma.interviewSession.update({
+        where: { id: sessionId },
+        data: { result_email_sent_at: new Date() }
+      });
+    } catch (mailErr: any) {
+      console.warn(`[ScoringService] Result email not sent (${mailErr.message})`);
+    }
   }
 
   console.log(`Session ${sessionId} scored. Overall: ${overall}%, Correct: ${correctCount}/10, Result: ${result}`);

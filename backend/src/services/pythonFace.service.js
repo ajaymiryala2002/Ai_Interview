@@ -40,7 +40,7 @@ async function compareFacesWithPython(referenceImageUrl, liveSnapshotDataUrl) {
                 scriptPath,
                 '--ref', refPathOnDisk,
                 '--live', liveSnapshotDataUrl,
-                '--tolerance', '0.65'
+                '--tolerance', '0.75'
             ];
             (0, child_process_1.execFile)(pythonExec, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
                 if (error) {
@@ -56,10 +56,17 @@ async function compareFacesWithPython(referenceImageUrl, liveSnapshotDataUrl) {
                     });
                 }
                 try {
-                    // Parse last JSON output line
+                    // Find the line that is a valid JSON (starts with '{' and ends with '}')
                     const lines = stdout.trim().split('\n');
-                    const lastLine = lines[lines.length - 1] || '{}';
-                    const result = JSON.parse(lastLine);
+                    let jsonLine = '{}';
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        const line = lines[i]?.trim() || '';
+                        if (line.startsWith('{') && line.endsWith('}')) {
+                            jsonLine = line;
+                            break;
+                        }
+                    }
+                    const result = JSON.parse(jsonLine);
                     console.log('[PythonFaceService] Python OpenCV result:', result);
                     resolve(result);
                 }

@@ -48,46 +48,59 @@ export const getNextQuestion = async (req: Request, res: Response) => {
     const answeredQuestionIds = session.answers.map(a => a.question_id);
     const answeredQuestionTexts = new Set(session.answers.map(a => a.question.text.toLowerCase().trim()));
 
-    // If we already have 10 questions answered, complete the session
+    // Check total question count in database
+    const totalDbQuestions = await prisma.question.count();
+    if (totalDbQuestions === 0) {
+      return res.status(500).json({
+        error: 'No interview questions found in database. Please run "node prisma/seed.js" in the backend folder to populate questions.'
+      });
+    }
+
+    // If 10 questions have already been answered, complete the session
     if (answeredQuestionIds.length >= QUESTIONS_PER_SESSION) {
       return res.json({ complete: true, message: 'All questions answered.' });
     }
 
-    // Fetch questions filtered by candidate role and difficulty (Easy + Medium only)
-    const allQuestions = await prisma.question.findMany({
+    // 1. Fetch questions matching candidate role (Easy and Medium)
+    let roleQuestions = await prisma.question.findMany({
       where: {
-        role: candidateRole,
-        difficulty: { in: ['Easy', 'Medium'] }
+        role: { equals: candidateRole },
+        difficulty: { in: ['Easy', 'Medium', 'easy', 'medium'] }
       }
     });
 
-    // Fallback to General questions if no role-specific questions exist
-    const questions = allQuestions.length > 0 ? allQuestions : await prisma.question.findMany({
+    // 2. Fetch General questions
+    const generalQuestions = await prisma.question.findMany({
       where: {
         role: 'General',
-        difficulty: { in: ['Easy', 'Medium'] }
+        difficulty: { in: ['Easy', 'Medium', 'easy', 'medium'] }
       }
     });
 
-    // Filter out already answered questions by ID and by text (deduplicate)
-    const remainingQuestions = questions.filter(q => {
+    // 3. Fallback: all questions in DB if needed
+    const allQuestions = await prisma.question.findMany();
+
+    // Pool candidates questions: role-specific first, then general, then any
+    const pool = [...roleQuestions, ...generalQuestions, ...allQuestions];
+
+    // Filter out already answered questions by ID and text
+    const remainingQuestions = pool.filter(q => {
       const notById = !answeredQuestionIds.includes(q.id);
       const notByText = !answeredQuestionTexts.has(q.text.toLowerCase().trim());
       return notById && notByText;
     });
 
-    // If no more questions, complete
+    // If no more questions left in the entire database, complete
     if (remainingQuestions.length === 0) {
-      return res.json({ complete: true, message: 'No more questions available.' });
+      if (answeredQuestionIds.length === 0) {
+        return res.status(500).json({ error: 'No available questions for this role.' });
+      }
+      return res.json({ complete: true, message: 'All available questions answered.' });
     }
 
     // Pick a random question from remaining
     const randomIndex = Math.floor(Math.random() * remainingQuestions.length);
-    const nextQuestion = remainingQuestions[randomIndex];
-
-    if (!nextQuestion) {
-      return res.json({ complete: true, message: 'No more questions available.' });
-    }
+    const nextQuestion = remainingQuestions[randomIndex]!;
 
     res.json({
       question: {
@@ -181,6 +194,21 @@ export const logProctoringEvent = async (req: Request, res: Response) => {
 export const completeSession = async (req: Request, res: Response) => {
   try {
     const id = req.params['id'] as string;
+
+    const session = await prisma.interviewSession.findUnique({
+      where: { id },
+      include: { answers: true }
+    });
+
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    // Prevent the interview from being submitted if no questions were answered.
+    if (session.answers.length === 0) {
+      return res.status(400).json({
+        error: 'Cannot submit an interview with no answers. Please answer at least one question before submitting.'
+      });
+    }
+
     await prisma.interviewSession.update({
       where: { id },
       data: { status: 'completed', ended_at: new Date() }
@@ -193,6 +221,40 @@ export const completeSession = async (req: Request, res: Response) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to complete session' });
+  }
+};
+
+export const getSessionResult = async (req: Request, res: Response) => {
+  try {
+    const id = req.params['id'] as string;
+    const session = await prisma.interviewSession.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        overall_score: true,
+        correct_count: true,
+        total_answered: true,
+        result: true,
+        cheating_detected: true,
+        rejection_reason: true
+      }
+    });
+
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    res.json({
+      sessionId: session.id,
+      status: session.status,
+      overallScore: session.overall_score,
+      correctCount: session.correct_count,
+      totalAnswered: session.total_answered,
+      result: session.result,
+      cheatingDetected: session.cheating_detected,
+      rejectionReason: session.rejection_reason
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch session result' });
   }
 };
 

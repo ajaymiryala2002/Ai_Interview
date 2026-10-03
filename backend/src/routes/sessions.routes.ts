@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { startSession, getNextQuestion, submitAnswer, logProctoringEvent, completeSession, verifyFace, cancelSession } from '../controllers/sessions.controller';
+import { startSession, getNextQuestion, submitAnswer, logProctoringEvent, completeSession, verifyFace, cancelSession, getSessionResult } from '../controllers/sessions.controller';
 
 const router = Router();
 
+router.get('/:id/result', getSessionResult);
 router.post('/:id/start', startSession);
 router.get('/:id/next-question', getNextQuestion);
 router.post('/:id/answer', submitAnswer);

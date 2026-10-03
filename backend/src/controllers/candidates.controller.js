@@ -57,13 +57,10 @@ const grantAccess = async (req, res) => {
         });
         if (!candidate)
             return res.status(404).json({ error: 'Candidate not found' });
-        (0, email_service_1.assertEmailConfiguration)();
-        const frontendUrl = process.env.FRONTEND_URL;
-        if (!frontendUrl)
-            throw new Error('FRONTEND_URL is not configured');
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
         const token = crypto_1.default.randomBytes(32).toString('hex');
         const expires_at = new Date();
-        expires_at.setHours(expires_at.getHours() + 1);
+        expires_at.setHours(expires_at.getHours() + 48); // 48 hours validity for testing
         const invite = await db_1.default.inviteToken.create({
             data: {
                 candidate_id: candidate.id,
@@ -71,26 +68,31 @@ const grantAccess = async (req, res) => {
                 expires_at
             }
         });
+        await db_1.default.candidate.update({
+            where: { id },
+            data: { access_granted: true }
+        });
         const inviteLink = `${frontendUrl.replace(/\/$/, '')}/interview/${token}/terms`;
+        let emailSent = false;
+        let emailNotice = '';
         try {
+            (0, email_service_1.assertEmailConfiguration)();
             await (0, email_service_1.sendInterviewInvitationEmail)(candidate, inviteLink);
-            await db_1.default.candidate.update({
-                where: { id },
-                data: { access_granted: true }
-            });
+            emailSent = true;
         }
-        catch (error) {
-            await db_1.default.inviteToken.delete({ where: { id: invite.id } });
-            throw error;
+        catch (mailErr) {
+            console.warn(`[GrantAccess] Email not sent (${mailErr.message}). Active link: ${inviteLink}`);
+            emailNotice = ' (Note: Email was not sent due to unconfigured SMTP. You can copy the invite link directly).';
         }
-        res.json({ message: 'Access granted and invitation email sent', inviteLink });
+        res.json({
+            message: `Access granted successfully!${emailNotice}`,
+            inviteLink,
+            emailSent
+        });
     }
     catch (error) {
-        console.error('Failed to grant access or send invitation:', error);
-        const message = error instanceof Error && error.message.startsWith('Email is not configured')
-            ? error.message
-            : 'Failed to send invitation email. Check the SMTP settings and server logs.';
-        res.status(500).json({ error: message });
+        console.error('Failed to grant access:', error);
+        res.status(500).json({ error: 'Failed to grant candidate access' });
     }
 };
 exports.grantAccess = grantAccess;

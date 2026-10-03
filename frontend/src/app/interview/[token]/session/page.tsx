@@ -25,6 +25,9 @@ export default function SessionPage({ params }: { params: Promise<{ token: strin
   const [progress, setProgress] = useState({ current: 1, total: 10 });
   const [interviewComplete, setInterviewComplete] = useState(false);
   const [interviewResult, setInterviewResult] = useState<'selected' | 'rejected' | null>(null);
+  const [overallScore, setOverallScore] = useState<number | null>(null);
+  const [correctCount, setCorrectCount] = useState<number | null>(null);
+  const [resultLoading, setResultLoading] = useState(false);
   const [cheatingDetected, setCheatingDetected] = useState(false);
   const [tabSwitchWarning, setTabSwitchWarning] = useState(false);
   const faceCheckInterval = useRef<NodeJS.Timeout | null>(null);
@@ -319,12 +322,56 @@ export default function SessionPage({ params }: { params: Promise<{ token: strin
   const completeInterview = async () => {
     const sessionId = localStorage.getItem('sessionId');
     if (!sessionId) return;
+    setResultLoading(true);
+    setInterviewComplete(true);
+
+    // Tell backend to finalize the session.
     await fetch(`/api/sessions/${sessionId}/complete`, { method: 'POST' });
+
     proctorRef.current?.stopProctoring();
     if (faceCheckInterval.current) clearInterval(faceCheckInterval.current);
     if (countdownInterval.current) clearInterval(countdownInterval.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
-    setInterviewComplete(true);
+
+    // Scoring happens asynchronously on the backend. Poll until we have a result.
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 2s = up to 60 seconds
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/result`);
+        if (!res.ok) throw new Error('Failed to fetch result');
+        const data = await res.json();
+
+        if (data.cheatingDetected) {
+          setCheatingDetected(true);
+          setInterviewResult('rejected');
+          setResultLoading(false);
+          return;
+        }
+
+        if (data.result === 'rejected' || data.result === 'selected') {
+          setInterviewResult(data.result);
+          setOverallScore(data.overallScore ?? null);
+          setCorrectCount(data.correctCount ?? null);
+          setResultLoading(false);
+          return;
+        }
+
+        if (++attempts < maxAttempts) {
+          setTimeout(poll, 2000);
+        } else {
+          // Fallback if scoring takes too long.
+          setInterviewResult('selected');
+          setResultLoading(false);
+        }
+      } catch (err) {
+        console.error('Failed to fetch interview result:', err);
+        if (++attempts < maxAttempts) setTimeout(poll, 2000);
+        else setResultLoading(false);
+      }
+    };
+
+    poll();
   };
 
   const cancelInterview = async (reason: string) => {
@@ -367,22 +414,44 @@ export default function SessionPage({ params }: { params: Promise<{ token: strin
 
   // Interview complete screen
   if (interviewComplete) {
+    const rejected = interviewResult === 'rejected' || cheatingDetected;
+    const scoreColor = rejected ? '#ef4444' : '#10b981';
+    const scoreBg = rejected ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+
     return (
       <div className="interview-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: '2rem' }}>
-        <div className="glass result-card" style={{ maxWidth: '500px', width: '100%', padding: '3rem', textAlign: 'center', borderRadius: '1.5rem' }}>
+        <div className="glass result-card" style={{ maxWidth: '520px', width: '100%', padding: '3rem', textAlign: 'center', borderRadius: '1.5rem' }}>
           <div style={{ fontSize: '4rem', marginBottom: '1.5rem' }}>
-            {interviewResult === 'rejected' || cheatingDetected ? '❌' : '✅'}
+            {rejected ? '❌' : '✅'}
           </div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '1rem', color: interviewResult === 'rejected' || cheatingDetected ? '#fca5a5' : '#6ee7b7' }}>
-            {interviewResult === 'rejected' || cheatingDetected ? 'Interview Ended' : 'Interview Submitted'}
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '1rem', color: rejected ? '#fca5a5' : '#6ee7b7' }}>
+            {rejected ? 'Interview Ended' : 'Interview Submitted'}
           </h1>
           <p style={{ color: '#94a3b8', lineHeight: 1.6, marginBottom: '2rem' }}>
             {cheatingDetected
               ? 'Cheating was detected during your interview. A rejection email has been sent automatically.'
               : interviewResult === 'rejected'
                 ? 'Your interview has been cancelled. A rejection email has been sent automatically.'
-                : 'Thank you for completing the interview! Your results will be reviewed and an email will be sent shortly.'}
+                : 'Thank you for completing the interview! Your results are being calculated and an email will be sent shortly.'}
           </p>
+
+          {resultLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
+              <div style={{ width: '40px', height: '40px', border: '4px solid rgba(255,255,255,0.1)', borderTop: '4px solid #3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Calculating your score…</p>
+            </div>
+          ) : (
+            <div style={{ background: scoreBg, padding: '1.5rem', borderRadius: '1rem', marginBottom: '2rem' }}>
+              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.875rem', fontWeight: 600 }}>Your Score</p>
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '2.5rem', fontWeight: 700, color: scoreColor }}>
+                {overallScore !== null ? `${Math.round(overallScore)}%` : '—'}
+              </p>
+              <p style={{ margin: '0.5rem 0 0 0', color: '#cbd5e1', fontSize: '1rem' }}>
+                Correct Answers: <strong style={{ color: scoreColor }}>{correctCount !== null ? correctCount : '—'} / 10</strong>
+              </p>
+            </div>
+          )}
+
           <button onClick={() => router.push('/')} className="btn-primary" style={{ width: '100%' }}>
             Return to Home
           </button>

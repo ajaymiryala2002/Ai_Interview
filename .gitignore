@@ -44,3 +44,4 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+backend/public/uploads/candidates/*

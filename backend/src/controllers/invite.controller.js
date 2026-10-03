@@ -14,17 +14,22 @@ const validateToken = async (req, res) => {
         });
         if (!invite)
             return res.status(404).json({ error: 'Invalid token' });
-        if (invite.status !== 'pending')
-            return res.status(400).json({ error: `Token is already ${invite.status}` });
         if (new Date() > invite.expires_at)
             return res.status(400).json({ error: 'Token expired' });
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-        const candidateImage = invite.candidate.image_url
-            ? (invite.candidate.image_url.startsWith('http') ? invite.candidate.image_url : `${baseUrl}${invite.candidate.image_url}`)
-            : null;
+        // Check if session is already completed
+        const existingSession = await db_1.default.interviewSession.findFirst({
+            where: { candidate_id: invite.candidate_id },
+            orderBy: { createdAt: 'desc' }
+        });
+        if (invite.status === 'used' && existingSession && ['completed', 'rejected', 'cancelled'].includes(existingSession.status)) {
+            return res.status(400).json({ error: 'This interview has already been submitted or completed.' });
+        }
+        // Keep candidateImage relative (/uploads/...) so mobile phones on ngrok fetch from the public origin
+        const candidateImage = invite.candidate.image_url || null;
         res.json({
             valid: true,
             candidateName: invite.candidate.name,
+            candidateRole: invite.candidate.role,
             candidateImage
         });
     }
@@ -39,8 +44,18 @@ const acceptTerms = async (req, res) => {
         const invite = await db_1.default.inviteToken.findUnique({
             where: { token }
         });
-        if (!invite || invite.status !== 'pending') {
-            return res.status(400).json({ error: 'Invalid or used token' });
+        if (!invite) {
+            return res.status(404).json({ error: 'Invalid token' });
+        }
+        const existingSession = await db_1.default.interviewSession.findFirst({
+            where: { candidate_id: invite.candidate_id },
+            orderBy: { createdAt: 'desc' }
+        });
+        if (existingSession && existingSession.status === 'in-progress') {
+            return res.json({ message: 'Terms already accepted', sessionId: existingSession.id });
+        }
+        if (invite.status !== 'pending') {
+            return res.status(400).json({ error: 'This interview token has already been used.' });
         }
         await db_1.default.inviteToken.update({
             where: { id: invite.id },

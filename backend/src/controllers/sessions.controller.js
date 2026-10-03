@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyFace = exports.cancelSession = exports.completeSession = exports.logProctoringEvent = exports.submitAnswer = exports.getNextQuestion = exports.startSession = void 0;
+exports.verifyFace = exports.cancelSession = exports.getSessionResult = exports.completeSession = exports.logProctoringEvent = exports.submitAnswer = exports.getNextQuestion = exports.startSession = void 0;
 const db_1 = __importDefault(require("../config/db"));
 const scoring_service_1 = require("../services/scoring.service");
 const pythonFace_service_1 = require("../services/pythonFace.service");
@@ -47,40 +47,51 @@ const getNextQuestion = async (req, res) => {
         const candidateRole = session.candidate.role || 'General';
         const answeredQuestionIds = session.answers.map(a => a.question_id);
         const answeredQuestionTexts = new Set(session.answers.map(a => a.question.text.toLowerCase().trim()));
-        // If we already have 10 questions answered, complete the session
+        // Check total question count in database
+        const totalDbQuestions = await db_1.default.question.count();
+        if (totalDbQuestions === 0) {
+            return res.status(500).json({
+                error: 'No interview questions found in database. Please run "node prisma/seed.js" in the backend folder to populate questions.'
+            });
+        }
+        // If 10 questions have already been answered, complete the session
         if (answeredQuestionIds.length >= QUESTIONS_PER_SESSION) {
             return res.json({ complete: true, message: 'All questions answered.' });
         }
-        // Fetch questions filtered by candidate role and difficulty (Easy + Medium only)
-        const allQuestions = await db_1.default.question.findMany({
+        // 1. Fetch questions matching candidate role (Easy and Medium)
+        let roleQuestions = await db_1.default.question.findMany({
             where: {
-                role: candidateRole,
-                difficulty: { in: ['Easy', 'Medium'] }
+                role: { equals: candidateRole },
+                difficulty: { in: ['Easy', 'Medium', 'easy', 'medium'] }
             }
         });
-        // Fallback to General questions if no role-specific questions exist
-        const questions = allQuestions.length > 0 ? allQuestions : await db_1.default.question.findMany({
+        // 2. Fetch General questions
+        const generalQuestions = await db_1.default.question.findMany({
             where: {
                 role: 'General',
-                difficulty: { in: ['Easy', 'Medium'] }
+                difficulty: { in: ['Easy', 'Medium', 'easy', 'medium'] }
             }
         });
-        // Filter out already answered questions by ID and by text (deduplicate)
-        const remainingQuestions = questions.filter(q => {
+        // 3. Fallback: all questions in DB if needed
+        const allQuestions = await db_1.default.question.findMany();
+        // Pool candidates questions: role-specific first, then general, then any
+        const pool = [...roleQuestions, ...generalQuestions, ...allQuestions];
+        // Filter out already answered questions by ID and text
+        const remainingQuestions = pool.filter(q => {
             const notById = !answeredQuestionIds.includes(q.id);
             const notByText = !answeredQuestionTexts.has(q.text.toLowerCase().trim());
             return notById && notByText;
         });
-        // If no more questions, complete
+        // If no more questions left in the entire database, complete
         if (remainingQuestions.length === 0) {
-            return res.json({ complete: true, message: 'No more questions available.' });
+            if (answeredQuestionIds.length === 0) {
+                return res.status(500).json({ error: 'No available questions for this role.' });
+            }
+            return res.json({ complete: true, message: 'All available questions answered.' });
         }
         // Pick a random question from remaining
         const randomIndex = Math.floor(Math.random() * remainingQuestions.length);
         const nextQuestion = remainingQuestions[randomIndex];
-        if (!nextQuestion) {
-            return res.json({ complete: true, message: 'No more questions available.' });
-        }
         res.json({
             question: {
                 id: nextQuestion.id,
@@ -170,6 +181,18 @@ exports.logProctoringEvent = logProctoringEvent;
 const completeSession = async (req, res) => {
     try {
         const id = req.params['id'];
+        const session = await db_1.default.interviewSession.findUnique({
+            where: { id },
+            include: { answers: true }
+        });
+        if (!session)
+            return res.status(404).json({ error: 'Session not found' });
+        // Prevent the interview from being submitted if no questions were answered.
+        if (session.answers.length === 0) {
+            return res.status(400).json({
+                error: 'Cannot submit an interview with no answers. Please answer at least one question before submitting.'
+            });
+        }
         await db_1.default.interviewSession.update({
             where: { id },
             data: { status: 'completed', ended_at: new Date() }
@@ -184,6 +207,40 @@ const completeSession = async (req, res) => {
     }
 };
 exports.completeSession = completeSession;
+const getSessionResult = async (req, res) => {
+    try {
+        const id = req.params['id'];
+        const session = await db_1.default.interviewSession.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                status: true,
+                overall_score: true,
+                correct_count: true,
+                total_answered: true,
+                result: true,
+                cheating_detected: true,
+                rejection_reason: true
+            }
+        });
+        if (!session)
+            return res.status(404).json({ error: 'Session not found' });
+        res.json({
+            sessionId: session.id,
+            status: session.status,
+            overallScore: session.overall_score,
+            correctCount: session.correct_count,
+            totalAnswered: session.total_answered,
+            result: session.result,
+            cheatingDetected: session.cheating_detected,
+            rejectionReason: session.rejection_reason
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: 'Failed to fetch session result' });
+    }
+};
+exports.getSessionResult = getSessionResult;
 const cancelSession = async (req, res) => {
     try {
         const id = req.params['id'];
